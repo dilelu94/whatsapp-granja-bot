@@ -7,6 +7,14 @@ const originalRequestPairingCode = Client.prototype.requestPairingCode;
 Client.prototype.requestPairingCode = async function (phoneNumber, showNotification = true, intervalMs = 180000) {
     const page = this.pupPage;
     
+    // Register console logger for debugging page issues
+    page.on('console', msg => {
+        const text = msg.text();
+        if (text.includes('Error') || text.includes('Pairing') || text.includes('AuthStore')) {
+            console.log(`[Browser Console] ${text}`);
+        }
+    });
+
     const exposeFunctionIfAbsent = async (page, name, fn) => {
         const exist = await page.evaluate((name) => {
             return !!window[name];
@@ -26,41 +34,55 @@ Client.prototype.requestPairingCode = async function (phoneNumber, showNotificat
         },
     );
 
-    return await page.evaluate(
-        async (phoneNumber, showNotification, intervalMs) => {
-            const getCode = async () => {
-                while (!window.AuthStore || !window.AuthStore.PairingCodeLinkUtils) {
-                    await new Promise((resolve) =>
-                        setTimeout(resolve, 250),
-                    );
+    try {
+        return await page.evaluate(
+            async (phoneNumber, showNotification, intervalMs) => {
+                const getCode = async () => {
+                    try {
+                        while (!window.AuthStore || !window.AuthStore.PairingCodeLinkUtils) {
+                            await new Promise((resolve) =>
+                                setTimeout(resolve, 250),
+                            );
+                        }
+                        window.AuthStore.PairingCodeLinkUtils.setPairingType(
+                            'ALT_DEVICE_LINKING',
+                        );
+                        await window.AuthStore.PairingCodeLinkUtils.initializeAltDeviceLinking();
+                        return await window.AuthStore.PairingCodeLinkUtils.startAltLinkingFlow(
+                            phoneNumber,
+                            showNotification,
+                        );
+                    } catch (e) {
+                        console.error('Error in getCode:', e);
+                        throw new Error(`[getCode error] ${e.message || e}\nStack: ${e.stack}`);
+                    }
+                };
+                if (window.codeInterval) {
+                    clearInterval(window.codeInterval); // remove existing interval
                 }
-                window.AuthStore.PairingCodeLinkUtils.setPairingType(
-                    'ALT_DEVICE_LINKING',
-                );
-                await window.AuthStore.PairingCodeLinkUtils.initializeAltDeviceLinking();
-                return window.AuthStore.PairingCodeLinkUtils.startAltLinkingFlow(
-                    phoneNumber,
-                    showNotification,
-                );
-            };
-            if (window.codeInterval) {
-                clearInterval(window.codeInterval); // remove existing interval
-            }
-            window.codeInterval = setInterval(async () => {
-                const state =
-                    window.require('WAWebSocketModel').Socket.state;
-                if (state != 'UNPAIRED' && state != 'UNPAIRED_IDLE') {
-                    clearInterval(window.codeInterval);
-                    return;
-                }
-                window.onCodeReceivedEvent(await getCode());
-            }, intervalMs);
-            return window.onCodeReceivedEvent(await getCode());
-        },
-        phoneNumber,
-        showNotification,
-        intervalMs,
-    );
+                window.codeInterval = setInterval(async () => {
+                    try {
+                        const state =
+                            window.require('WAWebSocketModel').Socket.state;
+                        if (state != 'UNPAIRED' && state != 'UNPAIRED_IDLE') {
+                            clearInterval(window.codeInterval);
+                            return;
+                        }
+                        window.onCodeReceivedEvent(await getCode());
+                    } catch (err) {
+                        console.error('Interval error:', err);
+                    }
+                }, intervalMs);
+                return window.onCodeReceivedEvent(await getCode());
+            },
+            phoneNumber,
+            showNotification,
+            intervalMs,
+        );
+    } catch (err) {
+        console.error('[Bot] requestPairingCode failed:', err.message);
+        throw err;
+    }
 };
 
 const QRCode = require('qrcode');
