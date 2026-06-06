@@ -80,8 +80,13 @@ Client.prototype.requestPairingCode = async function (phoneNumber, showNotificat
             intervalMs,
         );
     } catch (err) {
-        console.error('[Bot] requestPairingCode failed:', err.message);
-        throw err;
+        console.error('[Bot] requestPairingCode failed during initial attempt:', err.message || err);
+        const errMsg = err.message || String(err);
+        let userAlert = `⚠️ *ERROR DE VINCULACIÓN POR CÓDIGO*\n\n` +
+            `WhatsApp rechazó la solicitud del código de vinculación (posible límite de intentos excedido).\n\n` +
+            `*Detalle:* \`${errMsg}\`\n\n` +
+            `El bot permanecerá encendido e intentará volver a solicitar el código automáticamente en 3 minutos. *Por favor no reinicies el bot manualmente* para evitar que WhatsApp extienda el bloqueo.`;
+        telegram.sendTelegramAlert(userAlert);
     }
 };
 
