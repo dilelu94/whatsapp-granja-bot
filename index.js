@@ -1,4 +1,68 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
+
+// --- Monkey Patch for whatsapp-web.js requestPairingCode ---
+// This prevents the 't: t' error (TypeError: Cannot read properties of undefined (reading 'PairingCodeLinkUtils'))
+// when window.AuthStore is not fully loaded when requestPairingCode evaluates.
+const originalRequestPairingCode = Client.prototype.requestPairingCode;
+Client.prototype.requestPairingCode = async function (phoneNumber, showNotification = true, intervalMs = 180000) {
+    const page = this.pupPage;
+    
+    const exposeFunctionIfAbsent = async (page, name, fn) => {
+        const exist = await page.evaluate((name) => {
+            return !!window[name];
+        }, name);
+        if (exist) {
+            return;
+        }
+        await page.exposeFunction(name, fn);
+    };
+
+    await exposeFunctionIfAbsent(
+        page,
+        'onCodeReceivedEvent',
+        async (code) => {
+            this.emit('code', code);
+            return code;
+        },
+    );
+
+    return await page.evaluate(
+        async (phoneNumber, showNotification, intervalMs) => {
+            const getCode = async () => {
+                while (!window.AuthStore || !window.AuthStore.PairingCodeLinkUtils) {
+                    await new Promise((resolve) =>
+                        setTimeout(resolve, 250),
+                    );
+                }
+                window.AuthStore.PairingCodeLinkUtils.setPairingType(
+                    'ALT_DEVICE_LINKING',
+                );
+                await window.AuthStore.PairingCodeLinkUtils.initializeAltDeviceLinking();
+                return window.AuthStore.PairingCodeLinkUtils.startAltLinkingFlow(
+                    phoneNumber,
+                    showNotification,
+                );
+            };
+            if (window.codeInterval) {
+                clearInterval(window.codeInterval); // remove existing interval
+            }
+            window.codeInterval = setInterval(async () => {
+                const state =
+                    window.require('WAWebSocketModel').Socket.state;
+                if (state != 'UNPAIRED' && state != 'UNPAIRED_IDLE') {
+                    clearInterval(window.codeInterval);
+                    return;
+                }
+                window.onCodeReceivedEvent(await getCode());
+            }, intervalMs);
+            return window.onCodeReceivedEvent(await getCode());
+        },
+        phoneNumber,
+        showNotification,
+        intervalMs,
+    );
+};
+
 const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
