@@ -363,6 +363,26 @@ client.on('ready', async () => {
     console.log('[Bot] WhatsApp client is ready!');
     console.log('[Bot] Logged in as:', client.info ? client.info.wid.user : 'unknown');
     
+    // Clean up browser-side pairing/QR intervals so they don't keep running after auth
+    if (client.pupPage) {
+        try {
+            await client.pupPage.evaluate(() => {
+                if (window.codeInterval) {
+                    clearInterval(window.codeInterval);
+                    window.codeInterval = undefined;
+                }
+                // Remove QR change listener if it was attached
+                if (window.AuthStore && window.AuthStore.Conn) {
+                    window.AuthStore.Conn.off('change:ref');
+                }
+            });
+            console.log('[Bot] Limpiados intervalos de vinculación del navegador.');
+        } catch (e) {
+            // Not critical — the page context may have already navigated
+            console.log('[Bot] No se pudieron limpiar intervalos de vinculación (no es crítico):', e.message);
+        }
+    }
+
     // Si se usó código de vinculación, editar el mensaje con una confirmación
     telegram.notifyPairingSuccess('✅ *DISPOSITIVO VINCULADO CON ÉXITO*\n\nEl bot de WhatsApp se ha vinculado correctamente por código y ya está operativo.');
 

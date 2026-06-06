@@ -8,6 +8,11 @@ let qrAlertSent = false;
 let pairingCodeTelegramMessageId = null;
 let pairingCodeAlertSent = false;
 
+// Debounce state for QR updates
+let qrDebounceTimer = null;
+let qrEditInProgress = false;
+let qrPendingUpdate = null; // { qrPath, text }
+
 /**
  * Sends a generic text alert to Telegram.
  * @param {string} text 
@@ -313,8 +318,104 @@ function sendOrUpdateQrAlert(qrPath, text) {
         sendTelegramPhoto(qrPath, text);
         qrAlertSent = true;
     } else if (qrTelegramMessageId) {
-        editTelegramPhoto(qrTelegramMessageId, qrPath, text);
+        // Debounce: wait 500ms before editing, so rapid QR changes don't spam Telegram
+        qrPendingUpdate = { qrPath, text };
+        if (qrDebounceTimer) clearTimeout(qrDebounceTimer);
+        qrDebounceTimer = setTimeout(() => {
+            qrDebounceTimer = null;
+            if (!qrPendingUpdate || qrEditInProgress) return;
+            _flushQrEdit();
+        }, 500);
     }
+}
+
+/** @private Serialized QR edit — ensures only one editMessageMedia is in-flight at a time */
+function _flushQrEdit() {
+    if (!qrPendingUpdate || qrEditInProgress || !qrTelegramMessageId) return;
+    const { qrPath, text } = qrPendingUpdate;
+    qrPendingUpdate = null;
+    qrEditInProgress = true;
+    _editTelegramPhotoPromise(qrTelegramMessageId, qrPath, text)
+        .catch((err) => console.error('[Telegram] Error serializado de edición QR:', err.message))
+        .finally(() => {
+            qrEditInProgress = false;
+            // If another update arrived while we were editing, flush it
+            if (qrPendingUpdate) {
+                setTimeout(_flushQrEdit, 200);
+            }
+        });
+}
+
+/** @private Promise-based wrapper around editTelegramPhoto for serialization */
+function _editTelegramPhotoPromise(messageId, photoPath, caption) {
+    return new Promise((resolve, reject) => {
+        const { token, chatId } = config.telegram;
+        if (!token || !chatId || !messageId || !fs.existsSync(photoPath)) {
+            return resolve();
+        }
+
+        try {
+            const fileBuffer = fs.readFileSync(photoPath);
+            const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+
+            const mediaObj = JSON.stringify({
+                type: 'photo',
+                media: 'attach://photo',
+                caption: caption
+            });
+
+            const header =
+                `--${boundary}\r\n` +
+                `Content-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}\r\n` +
+                `--${boundary}\r\n` +
+                `Content-Disposition: form-data; name="message_id"\r\n\r\n${messageId}\r\n` +
+                `--${boundary}\r\n` +
+                `Content-Disposition: form-data; name="media"\r\n\r\n${mediaObj}\r\n` +
+                `--${boundary}\r\n` +
+                `Content-Disposition: form-data; name="photo"; filename="qr.png"\r\n` +
+                `Content-Type: image/png\r\n\r\n`;
+
+            const footer = `\r\n--${boundary}--\r\n`;
+
+            const options = {
+                hostname: 'api.telegram.org',
+                port: 443,
+                path: `/bot${token}/editMessageMedia`,
+                method: 'POST',
+                headers: {
+                    'Content-Type': `multipart/form-data; boundary=${boundary}`
+                }
+            };
+
+            const req = https.request(options, (res) => {
+                let responseBody = '';
+                res.on('data', (chunk) => { responseBody += chunk; });
+                res.on('end', () => {
+                    if (res.statusCode !== 200) {
+                        // Only log non-"not modified" errors — the 400 "not modified" is harmless
+                        if (!responseBody.includes('message is not modified')) {
+                            console.error(`[Telegram] Error editando foto (${res.statusCode}):`, responseBody);
+                        }
+                        resolve(); // Don't reject on API errors, just move on
+                    } else {
+                        console.log('[Telegram] Foto QR editada con éxito.');
+                        resolve();
+                    }
+                });
+            });
+
+            req.on('error', (err) => {
+                reject(err);
+            });
+
+            req.write(header);
+            req.write(fileBuffer);
+            req.write(footer);
+            req.end();
+        } catch (err) {
+            reject(err);
+        }
+    });
 }
 
 /**
@@ -348,6 +449,13 @@ function resetAlertFlags() {
     qrTelegramMessageId = null;
     pairingCodeAlertSent = false;
     pairingCodeTelegramMessageId = null;
+    // Cancel any pending QR debounce
+    if (qrDebounceTimer) {
+        clearTimeout(qrDebounceTimer);
+        qrDebounceTimer = null;
+    }
+    qrPendingUpdate = null;
+    qrEditInProgress = false;
 }
 
 module.exports = {
