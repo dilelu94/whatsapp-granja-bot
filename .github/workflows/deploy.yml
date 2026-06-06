@@ -37,4 +37,5 @@ jobs:
 
       - name: Restart Bot Process
         run: |
-          ssh -i ~/.ssh/id_rsa ubuntu@193.122.210.127 "pm2 restart whatsapp-bot"
+          ssh -i ~/.ssh/id_rsa ubuntu@193.122.210.127 "cd /home/ubuntu/whatsapp-granja-bot && npm install --omit=dev && pm2 restart whatsapp-bot"
+
