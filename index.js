@@ -302,6 +302,12 @@ if (client.authStrategy) {
             if (event === 'framenavigated') {
                 const wrappedListener = async function (frame) {
                     try {
+                        const isLogoutUrl = frame.url().includes('post_logout=1');
+                        if (isLogoutUrl && (!client.info || !client.info.wid)) {
+                            console.log('[Bot] Ignorado framenavigated a post_logout=1 antes de iniciar sesión.');
+                            await client.inject().catch(() => {});
+                            return;
+                        }
                         await listener(frame);
                     } catch (err) {
                         console.warn('[Bot] Capturado error no fatal de framenavigated:', err.message);
