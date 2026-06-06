@@ -274,7 +274,7 @@ if (config.telegram.pairingNumber) {
 // Create WhatsApp Client
 const client = new Client(clientOptions);
 
-// Monkey patch authStrategy to control page initialization, custom logout events, and navigation errors
+// Monkey patch authStrategy to wrap framenavigated events and catch execution context errors
 if (client.authStrategy) {
     const originalAfterBrowserInitialized = client.authStrategy.afterBrowserInitialized;
     client.authStrategy.afterBrowserInitialized = async function () {
@@ -283,20 +283,9 @@ if (client.authStrategy) {
         const page = client.pupPage;
         if (!page) return;
 
-        console.log('[Bot] Interceptada inicialización del navegador. Aplicando parches de estabilidad...');
+        console.log('[Bot] Interceptada inicialización del navegador. Aplicando parche de framenavigated...');
 
-        // 1. Expose custom onLogoutEvent to prevent false-positive logouts before authentication
-        await page.exposeFunction('onLogoutEvent', async () => {
-            if (client.info && client.info.wid) {
-                console.log('[Bot] Evento de logout recibido para sesión activa. Marcando lastLoggedOut = true');
-                client.lastLoggedOut = true;
-                await page.waitForNavigation({ waitUntil: 'load', timeout: 5000 }).catch(() => {});
-            } else {
-                console.log('[Bot] Ignorado evento de logout recibido antes de iniciar sesión.');
-            }
-        });
-
-        // 2. Wrap page.on to intercept 'framenavigated' and catch execution context destruction errors
+        // Wrap page.on to intercept 'framenavigated' and catch execution context destruction errors
         const originalPageOn = page.on;
         page.on = function (event, listener) {
             if (event === 'framenavigated') {
@@ -317,6 +306,8 @@ if (client.authStrategy) {
             }
             return originalPageOn.apply(this, arguments);
         };
+
+        console.log('[Bot] Parche de framenavigated aplicado correctamente.');
     };
 }
 
