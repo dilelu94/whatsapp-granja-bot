@@ -1,0 +1,40 @@
+name: Deploy to Oracle VPS
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 193.122.210.127 >> ~/.ssh/known_hosts
+
+      - name: Deploy files via Rsync
+        run: |
+          rsync -avz -e "ssh -i ~/.ssh/id_rsa" \
+            --exclude="storage.json" \
+            --exclude="*Credentials*" \
+            --exclude="*credentials*" \
+            --exclude=".wwebjs_auth*" \
+            --exclude="node_modules" \
+            --exclude=".git*" \
+            --exclude="qr.png" \
+            --exclude="*.key" \
+            --exclude=".env" \
+            --exclude="gemini.md" \
+            ./ ubuntu@193.122.210.127:/home/ubuntu/whatsapp-granja-bot/
+
+      - name: Restart Bot Process
+        run: |
+          ssh -i ~/.ssh/id_rsa ubuntu@193.122.210.127 "pm2 restart whatsapp-bot"
