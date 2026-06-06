@@ -66,10 +66,6 @@ const clientOptions = {
         dataPath: config.wwebjsAuthPath
     }),
     authTimeoutMs: 300000,  // 5 minutes — enough time to scan QR / pair
-    webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
-    },
 
     puppeteer: {
         headless: 'shell',
