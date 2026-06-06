@@ -81,14 +81,96 @@ Client.prototype.requestPairingCode = async function (phoneNumber, showNotificat
         );
     } catch (err) {
         console.error('[Bot] requestPairingCode failed during initial attempt:', err.message || err);
+        
+        // Clean up codeInterval on page to stop pairing code attempts
+        await page.evaluate(() => {
+            if (window.codeInterval) {
+                clearInterval(window.codeInterval);
+                window.codeInterval = undefined;
+            }
+        }).catch(() => {});
+
         const errMsg = err.message || String(err);
-        let userAlert = `⚠️ *ERROR DE VINCULACIÓN POR CÓDIGO*\n\n` +
-            `WhatsApp rechazó la solicitud del código de vinculación (posible límite de intentos excedido).\n\n` +
-            `*Detalle:* \`${errMsg}\`\n\n` +
-            `El bot permanecerá encendido e intentará volver a solicitar el código automáticamente en 3 minutos. *Por favor no reinicies el bot manualmente* para evitar que WhatsApp extienda el bloqueo.`;
+        let userAlert = `⚠️ *FALLBACK AUTOMÁTICO A MODO QR*\n\n` +
+            `WhatsApp rechazó la vinculación por código (límite de frecuencia excedido).\n\n` +
+            `*Activando modo QR de respaldo...* En un momento recibirás el código QR actualizado directamente en este chat para vincular el bot.`;
         telegram.sendTelegramAlert(userAlert);
+
+        // Dynamically activate QR fallback
+        try {
+            await activateQrFallback(this);
+        } catch (qrErr) {
+            console.error('[Bot] Failed to activate QR fallback:', qrErr);
+        }
     }
 };
+
+async function activateQrFallback(client) {
+    const page = client.pupPage;
+    
+    const exposeFunctionIfAbsent = async (page, name, fn) => {
+        const exist = await page.evaluate((name) => {
+            return !!window[name];
+        }, name);
+        if (exist) {
+            return;
+        }
+        await page.exposeFunction(name, fn);
+    };
+
+    // 1. Expose onQRChangedEvent if absent
+    await exposeFunctionIfAbsent(
+        page,
+        'onQRChangedEvent',
+        async (qr) => {
+            client.emit('qr', qr);
+        }
+    );
+
+    // 2. Evaluate the QR extraction script on the page
+    await page.evaluate(async () => {
+        while (!window.AuthStore || !window.AuthStore.RegistrationUtils || !window.AuthStore.Conn) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+
+        const registrationInfo =
+            await window.AuthStore.RegistrationUtils.waSignalStore.getRegistrationInfo();
+        const noiseKeyPair =
+            await window.AuthStore.RegistrationUtils.waNoiseInfo.get();
+        const staticKeyB64 = window.AuthStore.Base64Tools.encodeB64(
+            noiseKeyPair.staticKeyPair.pubKey,
+        );
+        const identityKeyB64 =
+            window.AuthStore.Base64Tools.encodeB64(
+                registrationInfo.identityKeyPair.pubKey,
+            );
+        const platform =
+            window.AuthStore.RegistrationUtils.DEVICE_PLATFORM;
+        
+        const getQR = (ref) =>
+            ref +
+            ',' +
+            staticKeyB64 +
+            ',' +
+            identityKeyB64 +
+            ',' +
+            window
+                .require('WAWebUserPrefsMultiDevice')
+                .getADVSecretKey() +
+            ',' +
+            platform;
+
+        // Trigger initial QR if ref exists
+        if (window.AuthStore.Conn.ref) {
+            window.onQRChangedEvent(getQR(window.AuthStore.Conn.ref));
+        }
+
+        // Listen for future QR ref changes
+        window.AuthStore.Conn.on('change:ref', (_, ref) => {
+            window.onQRChangedEvent(getQR(ref));
+        });
+    });
+}
 
 const QRCode = require('qrcode');
 const path = require('path');
