@@ -39,6 +39,7 @@ React *Auto-Reacciones:*
 
 🔍 *Utilidades:*
 • \`/groupid\` - Muestra el ID único (JID) del chat o grupo donde se envía el comando.
+• \`/wspstatus\` - Muestra el estado del bot (conexión, uptime, estadísticas de mensajes, memoria).
 • \`/help\` - Muestra esta guía de comandos.
 
 📅 *Google Calendar:*

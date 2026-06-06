@@ -2,6 +2,7 @@
 // before broader ones (e.g. /autoreact list before /autoreact, /schedulemedia
 // before /schedule). The final entry is the non-command fallback for auto-reactions.
 const commands = [
+    require('./wspstatus'),
     require('./save'),
     require('./groupid'),
     require('./help'),

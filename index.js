@@ -274,6 +274,46 @@ if (config.telegram.pairingNumber) {
 // Create WhatsApp Client
 const client = new Client(clientOptions);
 
+// Monkey patch authStrategy to control page initialization, custom logout events, and navigation errors
+if (client.authStrategy) {
+    const originalAfterBrowserInitialized = client.authStrategy.afterBrowserInitialized;
+    client.authStrategy.afterBrowserInitialized = async function () {
+        await originalAfterBrowserInitialized.apply(this, arguments);
+
+        const page = client.pupPage;
+        if (!page) return;
+
+        console.log('[Bot] Interceptada inicialización del navegador. Aplicando parches de estabilidad...');
+
+        // 1. Expose custom onLogoutEvent to prevent false-positive logouts before authentication
+        await page.exposeFunction('onLogoutEvent', async () => {
+            if (client.info && client.info.wid) {
+                console.log('[Bot] Evento de logout recibido para sesión activa. Marcando lastLoggedOut = true');
+                client.lastLoggedOut = true;
+                await page.waitForNavigation({ waitUntil: 'load', timeout: 5000 }).catch(() => {});
+            } else {
+                console.log('[Bot] Ignorado evento de logout recibido antes de iniciar sesión.');
+            }
+        });
+
+        // 2. Wrap page.on to intercept 'framenavigated' and catch execution context destruction errors
+        const originalPageOn = page.on;
+        page.on = function (event, listener) {
+            if (event === 'framenavigated') {
+                const wrappedListener = async function (frame) {
+                    try {
+                        await listener(frame);
+                    } catch (err) {
+                        console.warn('[Bot] Capturado error no fatal de framenavigated:', err.message);
+                    }
+                };
+                return originalPageOn.call(this, event, wrappedListener);
+            }
+            return originalPageOn.apply(this, arguments);
+        };
+    };
+}
+
 // Initialize scheduler
 scheduler.initScheduler(client);
 
